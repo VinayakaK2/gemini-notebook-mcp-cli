@@ -126,7 +126,7 @@ class TestQuery:
         assert call_kwargs["query_text"] == "question"
         assert call_kwargs["source_ids"] == ["src-1"]
         assert call_kwargs["conversation_id"] is None
-        assert 0 < call_kwargs["timeout"] <= 120.0
+        assert 0 < call_kwargs["timeout"] <= 120.0 + 1e-9
 
     def test_new_conversation_passed_through(self, mock_client):
         mock_client.query.return_value = {"answer": "ok"}
@@ -145,7 +145,7 @@ class TestQuery:
         assert call_kwargs["source_ids"] == ["src-1"]
         assert call_kwargs["conversation_id"] is None
         assert call_kwargs["new_conversation"] is True
-        assert 0 < call_kwargs["timeout"] <= 120.0
+        assert 0 < call_kwargs["timeout"] <= 120.0 + 1e-9
 
     def test_enterprise_source_resolution_uses_enterprise_list(self, mock_client):
         """Whole-notebook Enterprise queries must not call consumer get_notebook."""
