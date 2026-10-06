@@ -683,7 +683,11 @@ def confirm_auth_via_api(profile: str | None = None) -> tuple[bool, str | None]:
             client.list_notebooks()
         return True, None
     except Exception as exc:
-        return False, str(exc)
+        import httpx as _httpx
+
+        if isinstance(exc, (_httpx.TimeoutException, _httpx.RequestError)):
+            return False, f"network_error: {type(exc).__name__}: {exc}"
+        return False, f"{type(exc).__name__}: {exc}"
 
 
 def credentials_are_usable(
@@ -699,7 +703,13 @@ def credentials_are_usable(
     """
     report = get_auth_health_checker(profile=profile).check(force=force)
     if report.status == "configured":
-        return True, report.status, None
+        if not force:
+            return True, report.status, None
+        ok, err = confirm_auth_via_api(profile=report.profile)
+        if ok:
+            return True, "configured", None
+        status = "unverified" if err and err.startswith("network_error:") else "stale"
+        return False, status, err
 
     if report.status in ("stale", "unverified"):
         ok, err = confirm_auth_via_api(profile=report.profile)
