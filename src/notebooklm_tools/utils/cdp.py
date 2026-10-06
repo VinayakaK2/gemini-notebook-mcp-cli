@@ -1972,6 +1972,11 @@ def run_headless_auth(
 
     # Check if profile exists with saved login
     if not has_chrome_profile(profile_name):
+        if raise_on_error:
+            raise AuthenticationError(
+                message=f"No saved browser profile is available for '{profile_name}'",
+                hint="Run 'nlm login' once in a desktop session to create and sign in the managed browser profile.",
+            )
         return None
 
     chrome_process: subprocess.Popen | None = None
@@ -2017,10 +2022,20 @@ def run_headless_auth(
         # Find or create NotebookLM page
         page = find_or_create_notebooklm_page(port)
         if not page:
+            if raise_on_error:
+                raise AuthenticationError(
+                    message="Could not open NotebookLM in the headless authentication browser",
+                    hint="Run 'nlm login' in a desktop session to refresh the managed browser profile.",
+                )
             return None
 
         ws_url = _normalize_ws_url(page.get("webSocketDebuggerUrl"))
         if not ws_url:
+            if raise_on_error:
+                raise AuthenticationError(
+                    message="NotebookLM page did not expose a usable DevTools websocket",
+                    hint="Run 'nlm login' in a desktop session to refresh the managed browser profile.",
+                )
             return None
 
         # Poll for login completion (navigation is async)
@@ -2037,18 +2052,33 @@ def run_headless_auth(
             time.sleep(1)
 
         if not logged_in:
-            # Not logged in - headless can't help
+            # Not logged in - headless can't help without a prior visible sign-in.
+            if raise_on_error:
+                raise AuthenticationError(
+                    message=f"Saved browser profile '{profile_name}' is not signed in to NotebookLM",
+                    hint="Run 'nlm login' in a desktop session once, then headless refresh can reuse that managed browser session.",
+                )
             return None
 
         # Wait for full page load
         html, ready = _wait_for_page_ready(ws_url, timeout=timeout)
         if not ready:
+            if raise_on_error:
+                raise AuthenticationError(
+                    message="NotebookLM did not finish loading in the headless authentication browser",
+                    hint="Run 'nlm login' in a desktop session to refresh the managed browser profile.",
+                )
             return None
 
         # Keep the raw list so per-domain values survive profile storage.
         cookies_list = get_page_cookies(ws_url)
 
         if not validate_cookies(cookies_list):
+            if raise_on_error:
+                raise AuthenticationError(
+                    message="Saved browser profile did not expose the required NotebookLM cookies",
+                    hint="Run 'nlm login' in a desktop session to refresh the managed browser profile.",
+                )
             return None
 
         # Get page HTML for CSRF extraction
@@ -2068,6 +2098,11 @@ def run_headless_auth(
             extracted_at=time.time(),
         )
         if not _validate_headless_candidate(tokens, profile_name):
+            if raise_on_error:
+                raise AuthenticationError(
+                    message="NotebookLM rejected the credentials extracted from the saved browser profile",
+                    hint="Run 'nlm login' in a desktop session to refresh the managed browser profile.",
+                )
             return None
 
         save_kwargs: dict[str, Any] = {"profile_name": profile_name}
