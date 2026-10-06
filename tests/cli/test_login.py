@@ -235,6 +235,47 @@ def test_validate_saved_profile_rejects_rpc_stale_false_positive(monkeypatch):
         _validate_saved_profile(CheckAuthManager("KS"))
 
 
+def test_validate_saved_profile_avoids_duplicate_notebook_count_rpc(tmp_path, monkeypatch):
+    """A valid live check should reuse the confirmed count without a 2nd list_notebooks RPC."""
+    import notebooklm_tools.services.auth as sa
+    from notebooklm_tools.cli.main import _validate_saved_profile
+    from notebooklm_tools.core.auth import AuthManager
+
+    monkeypatch.setattr("notebooklm_tools.utils.config.get_storage_dir", lambda: tmp_path)
+    mgr = AuthManager("test_reuse")
+    mgr.save_profile(cookies={"SID": "s"}, csrf_token="c", session_id="1", build_label="b")
+
+    call_count = 0
+
+    class CountingClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def list_notebooks(self):
+            nonlocal call_count
+            call_count += 1
+            return ["nb1", "nb2"]
+
+    monkeypatch.setattr("notebooklm_tools.core.client.NotebookLMClient", CountingClient)
+    monkeypatch.setattr(
+        sa.AuthHealthChecker,
+        "_probe_homepage",
+        lambda *a, **k: (True, None, "c", 200),
+    )
+
+    profile, count = _validate_saved_profile(mgr)
+
+    assert profile.name == "test_reuse"
+    assert count == 2
+    assert call_count == 1
+
+
 def test_check_valid_reports_notebook_count(monkeypatch):
     monkeypatch.setattr("notebooklm_tools.core.auth.AuthManager", CheckAuthManager)
     monkeypatch.setattr(
