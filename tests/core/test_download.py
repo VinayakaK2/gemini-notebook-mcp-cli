@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for DownloadMixin."""
 
+import os
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
@@ -912,3 +913,41 @@ class TestStudioMindMapDownload:
 
         assert out == str(tmp_path / "quiz.json")
         assert mock_content.call_args[0][1] == "q-1"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_download_temp_file_honors_umask_not_owner_only(tmp_path):
+    umask = os.umask(0)
+    os.umask(umask)
+    temp = _create_download_temp_path(tmp_path / "artifact.bin")
+    try:
+        assert temp.stat().st_mode & 0o777 == 0o666 & ~umask
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def test_interrupted_download_removes_its_temp_file(tmp_path):
+    mixin = DownloadMixin(cookies={"SID": "cookie"}, csrf_token="test")
+    output = tmp_path / "artifact.bin"
+
+    class InterruptedClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def stream(self, method, url):
+            raise KeyboardInterrupt
+
+    with (
+        patch("notebooklm_tools.core.download.httpx.Client", InterruptedClient),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        mixin._download_url_sync("https://example.com/file", str(output))
+
+    assert not list(tmp_path.glob(".nlm-download-*.tmp"))
+    assert not output.exists()

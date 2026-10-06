@@ -58,12 +58,19 @@ class AliasManager:
                 return
             raw_data = json.loads(content)
             self._aliases = {name: AliasEntry.from_dict(data) for name, data in raw_data.items()}
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        except (OSError, json.JSONDecodeError, TypeError, ValueError, AttributeError):
             self._aliases = {}
 
     def _load(self) -> None:
-        """Refresh aliases from disk under the cross-process lock."""
-        with self._lock():
+        """Refresh aliases from disk under the cross-process lock.
+
+        Reads still work (unlocked) when the lock file cannot be created,
+        e.g. on a read-only config directory.
+        """
+        try:
+            with self._lock():
+                self._load_unlocked()
+        except OSError:
             self._load_unlocked()
 
     def _save_unlocked(self) -> None:

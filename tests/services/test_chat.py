@@ -387,6 +387,23 @@ class TestQueryStart:
 
         assert first["status"] == "in_progress"
 
+    def test_thread_start_failure_releases_async_query_slot(self, mock_client, monkeypatch):
+        import threading
+
+        monkeypatch.setenv("NOTEBOOKLM_ASYNC_QUERY_MAX_INFLIGHT", "1")
+        with _pending_lock:
+            _pending_queries.clear()
+
+        def cannot_start(self):
+            raise RuntimeError("can't start new thread")
+
+        monkeypatch.setattr(threading.Thread, "start", cannot_start)
+        with pytest.raises(RuntimeError):
+            query_start(mock_client, "nb-123", "q1", source_ids=["src-1"])
+
+        with _pending_lock:
+            assert not _pending_queries
+
     def test_completed_query_releases_async_query_slot(self, mock_client, monkeypatch):
         import time as _time
 

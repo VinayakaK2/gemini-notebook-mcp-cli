@@ -87,3 +87,27 @@ def test_write_failure_becomes_service_error(monkeypatch):
     monkeypatch.setattr("notebooklm_tools.core.alias.AliasManager.set_alias", boom)
     with pytest.raises(ServiceError, match="Could not save aliases"):
         aliases.set_alias("x", "y")
+
+
+@pytest.mark.parametrize("content", ["[]", '{"a": 5}', '{"a": ["x"]}'])
+def test_unexpected_aliases_file_shape_resets_instead_of_crashing(tmp_path, monkeypatch, content):
+    from notebooklm_tools.core import alias as alias_core
+
+    monkeypatch.setattr(alias_core, "get_config_dir", lambda: tmp_path)
+    (tmp_path / "aliases.json").write_text(content, encoding="utf-8")
+
+    assert alias_core.AliasManager().resolve("a") == "a"
+
+
+def test_alias_reads_work_when_lock_file_cannot_be_created(tmp_path, monkeypatch):
+    from notebooklm_tools.core import alias as alias_core
+
+    monkeypatch.setattr(alias_core, "get_config_dir", lambda: tmp_path)
+    alias_core.AliasManager().set_alias("alpha", "a")
+
+    def read_only(self):
+        raise PermissionError("read-only config dir")
+
+    monkeypatch.setattr(alias_core.AliasManager, "_lock", read_only)
+
+    assert alias_core.AliasManager().resolve("alpha") == "a"

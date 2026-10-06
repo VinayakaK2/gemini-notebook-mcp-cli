@@ -601,7 +601,12 @@ def query_start(
         ),
         daemon=True,
     )
-    thread.start()
+    try:
+        thread.start()
+    except Exception:
+        with _pending_lock:
+            _pending_queries.pop(query_id, None)
+        raise
 
     return {
         "query_id": query_id,

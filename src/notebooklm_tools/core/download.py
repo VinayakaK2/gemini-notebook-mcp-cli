@@ -7,7 +7,7 @@ import html as html_module
 import json
 import os
 import re
-import tempfile
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -31,13 +31,11 @@ from .utils import is_mind_map_json
 
 def _create_download_temp_path(output_file: Path) -> Path:
     """Reserve a unique same-directory temp file for one download transfer."""
-    fd, temp_path = tempfile.mkstemp(
-        prefix=".nlm-download-",
-        suffix=".tmp",
-        dir=output_file.parent,
-    )
-    os.close(fd)
-    return Path(temp_path)
+    # Not tempfile.mkstemp: it forces 0600, which the final file would inherit.
+    # O_EXCL still guarantees a unique file; 0o666 lets the umask decide the mode.
+    temp_path = output_file.parent / f".nlm-download-{uuid.uuid4().hex}.tmp"
+    os.close(os.open(temp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666))
+    return temp_path
 
 
 class DownloadMixin(BaseClient):
@@ -280,6 +278,9 @@ class DownloadMixin(BaseClient):
             raise ArtifactDownloadError(
                 "file", details=f"Failed to download from {url[:50]}...: {str(e)}"
             ) from e
+        finally:
+            # Also covers cancellation/Ctrl-C, which skip the except blocks above.
+            temp_file.unlink(missing_ok=True)
 
     def _download_url_sync(self, url: str, output_path: str) -> str:
         """Stream a binary artifact URL synchronously to a local file."""
@@ -332,6 +333,8 @@ class DownloadMixin(BaseClient):
             raise ArtifactDownloadError(
                 "file", details=f"Failed to download from {url[:50]}...: {e}"
             ) from e
+        finally:
+            temp_file.unlink(missing_ok=True)
 
     def _list_raw(self, notebook_id: str) -> list[Any]:
         """Get raw artifact list for parsing download URLs."""
