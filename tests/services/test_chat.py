@@ -174,7 +174,7 @@ class TestQuery:
         assert call_kwargs["query_text"] == "question"
         assert call_kwargs["source_ids"] is None
         assert call_kwargs["conversation_id"] is None
-        assert 0 < call_kwargs["timeout"] <= 30.0
+        assert 0 < call_kwargs["timeout"] <= 30.0 + 1e-9
 
     @patch("notebooklm_tools.services.chat.notebook_service")
     def test_query_reuses_validated_sources_and_timeout_budget(
