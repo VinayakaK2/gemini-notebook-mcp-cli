@@ -83,7 +83,7 @@ def test_select_auth_backend_passes_comet_preference_to_chromium_discovery():
 def test_get_chromium_path_selects_named_comet_on_macos():
     from notebooklm_tools.utils.cdp import _get_chromium_path
 
-    expected = "/Applications/Comet.app/Contents/MacOS/Comet"
+    expected = str(Path("/Applications") / "Comet.app/Contents/MacOS/Comet")
 
     def fake_exists(path: Path) -> bool:
         return str(path) == expected
