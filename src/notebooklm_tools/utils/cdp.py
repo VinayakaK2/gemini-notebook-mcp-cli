@@ -1870,6 +1870,7 @@ def run_headless_auth(
     profile_name: str = "default",
     expected_revision: str | None = None,
     force: bool | None = None,
+    raise_on_error: bool = False,
 ) -> "Any | None":
     """Run authentication in headless mode (no user interaction).
 
@@ -1884,6 +1885,8 @@ def run_headless_auth(
         profile_name: The profile name to use for Chrome
         expected_revision: Optional expected revision for compare-and-save
         force: If True, overwrite without revision check
+        raise_on_error: If True, surface safe browser infrastructure failures
+            instead of collapsing them to None.
 
     Returns:
         AuthTokens if successful, None if failed or no saved login
@@ -1936,11 +1939,21 @@ def run_headless_auth(
             port = find_available_port(starting_from=port)
             chrome_process = launch_chrome_process(port, headless=True, profile_name=profile_name)
             if not chrome_process:
+                if raise_on_error:
+                    raise AuthenticationError(
+                        message="Failed to launch the headless authentication browser",
+                        hint="Run 'nlm login' in a desktop session to re-authenticate.",
+                    )
                 return None
 
             # Wait for Chrome debugger to be ready
             debugger_url = get_debugger_url(port, tries=5)
             if not debugger_url:
+                if raise_on_error:
+                    raise AuthenticationError(
+                        message=f"Cannot connect to the headless authentication browser on port {port}",
+                        hint="Run 'nlm login' in a desktop session to re-authenticate.",
+                    )
                 return None
 
         # Find or create NotebookLM page
@@ -2014,7 +2027,23 @@ def run_headless_auth(
 
     except CredentialStoreError:
         raise
-    except Exception:
+    except AuthenticationError:
+        if raise_on_error:
+            raise
+        return None
+    except RuntimeError as exc:
+        if raise_on_error:
+            raise AuthenticationError(
+                message=str(exc),
+                hint="Run 'nlm login' in a desktop session to re-authenticate.",
+            ) from exc
+        return None
+    except Exception as exc:
+        if raise_on_error:
+            raise AuthenticationError(
+                message=f"Headless browser refresh failed ({type(exc).__name__})",
+                hint="Run 'nlm login' in a desktop session to re-authenticate.",
+            ) from exc
         return None
 
     finally:

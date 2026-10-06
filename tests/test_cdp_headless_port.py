@@ -3,6 +3,8 @@ may already hold, which would let it probe the wrong browser (issue #330)."""
 
 from unittest.mock import patch
 
+import pytest
+
 from notebooklm_tools.utils import cdp
 
 
@@ -19,3 +21,42 @@ def test_headless_auth_uses_free_port_when_launching():
     assert result is None  # bailed out after launch returned None
     free_port.assert_called_once_with(starting_from=9223)
     launch.assert_called_once_with(9999, headless=True, profile_name="work")
+
+
+def test_headless_auth_keeps_best_effort_port_failure_compatible():
+    """Automatic recovery must keep returning None for infrastructure failures."""
+    with (
+        patch.object(cdp, "has_chrome_profile", return_value=True),
+        patch.object(cdp, "find_existing_nlm_chrome", return_value=(None, None)),
+        patch.object(
+            cdp,
+            "find_available_port",
+            side_effect=RuntimeError("No available ports in range 9222-9231."),
+        ),
+    ):
+        result = cdp.run_headless_auth(port=9222, profile_name="work")
+
+    assert result is None
+
+
+def test_headless_auth_can_surface_safe_port_failure():
+    """Explicit refresh diagnostics should preserve an actionable CDP failure."""
+    from notebooklm_tools.core.exceptions import AuthenticationError
+
+    with (
+        patch.object(cdp, "has_chrome_profile", return_value=True),
+        patch.object(cdp, "find_existing_nlm_chrome", return_value=(None, None)),
+        patch.object(
+            cdp,
+            "find_available_port",
+            side_effect=RuntimeError("No available ports in range 9222-9231."),
+        ),
+        pytest.raises(AuthenticationError, match="9222-9231") as exc_info,
+    ):
+        cdp.run_headless_auth(
+            port=9222,
+            profile_name="work",
+            raise_on_error=True,
+        )
+
+    assert "nlm login" in str(exc_info.value).lower()
