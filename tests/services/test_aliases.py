@@ -55,6 +55,31 @@ def test_alias_written_by_another_process_is_seen_immediately():
     assert aliases.resolve("late") == "xyz"
 
 
+def test_stale_alias_managers_preserve_each_others_updates(tmp_path, monkeypatch):
+    from notebooklm_tools.core import alias as alias_core
+
+    monkeypatch.setattr(alias_core, "get_config_dir", lambda: tmp_path)
+    first = alias_core.AliasManager()
+    second = alias_core.AliasManager()
+
+    first.set_alias("alpha", "a")
+    second.set_alias("beta", "b")
+
+    assert alias_core.AliasManager().get_alias("alpha") == "a"
+    assert alias_core.AliasManager().get_alias("beta") == "b"
+
+
+def test_long_lived_alias_manager_refreshes_before_reads(tmp_path, monkeypatch):
+    from notebooklm_tools.core import alias as alias_core
+
+    monkeypatch.setattr(alias_core, "get_config_dir", lambda: tmp_path)
+    long_lived = alias_core.AliasManager()
+    alias_core.AliasManager().set_alias("late", "xyz")
+
+    assert long_lived.resolve("late") == "xyz"
+    assert long_lived.get_alias("late") == "xyz"
+
+
 def test_write_failure_becomes_service_error(monkeypatch):
     def boom(self, *a, **k):
         raise OSError("disk full")
