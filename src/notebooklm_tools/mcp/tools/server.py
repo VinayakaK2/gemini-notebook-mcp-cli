@@ -7,6 +7,7 @@ import urllib.request
 from typing import Any, cast
 
 from notebooklm_tools import __version__
+from notebooklm_tools.utils.versioning import is_newer_version
 
 from ._utils import logged_tool
 
@@ -71,21 +72,6 @@ def _get_latest_pypi_version() -> str | None:
         latest = _fetch_latest_pypi_version()
         _version_cache = (now, latest)
         return latest
-
-
-def _compare_versions(current: str, latest: str) -> bool:
-    """Compare version strings to determine if an update is available.
-
-    Returns:
-        True if latest is greater than current.
-    """
-    try:
-        # Simple comparison: split by dots and compare numerically
-        current_parts = [int(x) for x in current.split(".")]
-        latest_parts = [int(x) for x in latest.split(".")]
-        return latest_parts > current_parts
-    except (ValueError, AttributeError):
-        return False
 
 
 def _check_auth_status() -> str:
@@ -241,7 +227,7 @@ def server_info() -> dict[str, Any]:
     update_available = False
 
     if latest:
-        update_available = _compare_versions(__version__, latest)
+        update_available = is_newer_version(__version__, latest)
 
     info: dict[str, Any] = {
         "status": "success",
