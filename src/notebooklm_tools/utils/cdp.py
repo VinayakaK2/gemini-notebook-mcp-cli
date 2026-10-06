@@ -303,18 +303,31 @@ def normalize_cdp_http_url(cdp_url: str) -> str:
     return f"http://{raw.rstrip('/')}"
 
 
-def find_available_port(starting_from: int = 9222, max_attempts: int = 10) -> int:
-    """Find an available port for Chrome debugging.
+def find_available_port(
+    starting_from: int = 9222,
+    max_attempts: int = 10,
+    *,
+    allow_ephemeral_fallback: bool = True,
+) -> int:
+    """Find an available loopback port for Chrome debugging.
+
+    Scans the conventional CDP range first. If every candidate is unavailable,
+    optionally asks the OS for an ephemeral loopback port. The fallback matters
+    on Windows hosts where Hyper-V/WinNAT can reserve a large contiguous block
+    around 9222 even when no process is listening there.
 
     Args:
-        starting_from: Port to start scanning from
-        max_attempts: Number of ports to try
+        starting_from: Port to start scanning from.
+        max_attempts: Number of adjacent ports to try first.
+        allow_ephemeral_fallback: If True, use an OS-assigned loopback port when
+            the requested range is unavailable. Exact-port callers can disable
+            this and retain the historical RuntimeError behavior.
 
     Returns:
-        An available port number
+        An available port number.
 
     Raises:
-        RuntimeError: If no available ports found
+        RuntimeError: If no available port can be reserved.
     """
     import socket
 
@@ -326,6 +339,15 @@ def find_available_port(starting_from: int = 9222, max_attempts: int = 10) -> in
                 return port
         except OSError:
             continue
+
+    if allow_ephemeral_fallback:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("127.0.0.1", 0))
+                return int(s.getsockname()[1])
+        except OSError:
+            pass
+
     raise RuntimeError(
         f"No available ports in range {starting_from}-{starting_from + max_attempts - 1}. "
         "Close some applications and try again."
@@ -1470,6 +1492,45 @@ def _kill_stale_nlm_browsers() -> None:
                 _clear_port_map(int(port_str))
 
 
+def _clear_managed_profile_directory(profile_name: str, profile_dir: Path) -> None:
+    """Close a profile-owned browser and remove its managed user-data directory."""
+    existing_port, debugger_url = find_existing_nlm_chrome(
+        profile_name=profile_name,
+        include_headless=True,
+    )
+    if existing_port is not None and debugger_url:
+        closed = close_profile_owned_cdp_browser(_cdp_http_base(existing_port), profile_name)
+        if not closed:
+            remaining_port, remaining_url = find_existing_nlm_chrome(
+                profile_name=profile_name,
+                include_headless=True,
+            )
+            if remaining_port is not None and remaining_url:
+                raise AuthenticationError(
+                    message=f"Could not close browser profile '{profile_name}'",
+                    hint=(
+                        "Close the managed NotebookLM browser for this profile and run "
+                        "'nlm login --clear' again."
+                    ),
+                )
+
+    for _ in range(20):
+        if not profile_dir.exists():
+            return
+        shutil.rmtree(profile_dir, ignore_errors=True)
+        if not profile_dir.exists():
+            return
+        time.sleep(0.1)
+
+    raise AuthenticationError(
+        message=f"Could not clear browser profile '{profile_name}'",
+        hint=(
+            "Close the managed NotebookLM browser for this profile and run "
+            "'nlm login --clear' again."
+        ),
+    )
+
+
 def extract_cookies_via_cdp(
     port: int = CDP_DEFAULT_PORT,
     auto_launch: bool = True,
@@ -1497,8 +1558,6 @@ def extract_cookies_via_cdp(
         AuthenticationError: If extraction fails
     """
     if clear_profile:
-        import shutil
-
         chrome_path = get_chrome_path()
         if chrome_path:
             profile_dir = _get_profile_dir_for_launch(chrome_path, profile_name)
@@ -1506,8 +1565,7 @@ def extract_cookies_via_cdp(
             from notebooklm_tools.utils.config import get_chrome_profile_dir
 
             profile_dir = get_chrome_profile_dir(profile_name)
-        if profile_dir.exists():
-            shutil.rmtree(profile_dir, ignore_errors=True)
+        _clear_managed_profile_directory(profile_name, profile_dir)
 
     # Check if Chrome is running with debugging
     # First, try to find an existing instance on any port in our range
@@ -1870,6 +1928,7 @@ def run_headless_auth(
     profile_name: str = "default",
     expected_revision: str | None = None,
     force: bool | None = None,
+    raise_on_error: bool = False,
 ) -> "Any | None":
     """Run authentication in headless mode (no user interaction).
 
@@ -1884,6 +1943,8 @@ def run_headless_auth(
         profile_name: The profile name to use for Chrome
         expected_revision: Optional expected revision for compare-and-save
         force: If True, overwrite without revision check
+        raise_on_error: If True, surface safe browser infrastructure failures
+            instead of collapsing them to None.
 
     Returns:
         AuthTokens if successful, None if failed or no saved login
@@ -1936,11 +1997,21 @@ def run_headless_auth(
             port = find_available_port(starting_from=port)
             chrome_process = launch_chrome_process(port, headless=True, profile_name=profile_name)
             if not chrome_process:
+                if raise_on_error:
+                    raise AuthenticationError(
+                        message="Failed to launch the headless authentication browser",
+                        hint="Run 'nlm login' in a desktop session to re-authenticate.",
+                    )
                 return None
 
             # Wait for Chrome debugger to be ready
             debugger_url = get_debugger_url(port, tries=5)
             if not debugger_url:
+                if raise_on_error:
+                    raise AuthenticationError(
+                        message=f"Cannot connect to the headless authentication browser on port {port}",
+                        hint="Run 'nlm login' in a desktop session to re-authenticate.",
+                    )
                 return None
 
         # Find or create NotebookLM page
@@ -2014,7 +2085,23 @@ def run_headless_auth(
 
     except CredentialStoreError:
         raise
-    except Exception:
+    except AuthenticationError:
+        if raise_on_error:
+            raise
+        return None
+    except RuntimeError as exc:
+        if raise_on_error:
+            raise AuthenticationError(
+                message=str(exc),
+                hint="Run 'nlm login' in a desktop session to re-authenticate.",
+            ) from exc
+        return None
+    except Exception as exc:
+        if raise_on_error:
+            raise AuthenticationError(
+                message=f"Headless browser refresh failed ({type(exc).__name__})",
+                hint="Run 'nlm login' in a desktop session to re-authenticate.",
+            ) from exc
         return None
 
     finally:
