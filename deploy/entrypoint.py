@@ -44,7 +44,8 @@ def main() -> int:
 
     port = int(os.environ.get("PORT", "10000"))
     command = [
-        "tunnel-client", "run",
+        "tunnel-client",
+        "run",
         "--health.listen-addr", "127.0.0.1:10001",
         "--mcp.command", "notebooklm-mcp",
         "--log.level=info",
